@@ -1,4 +1,4 @@
-'use client'
+"use client"
 
 import React, { useState, FC } from 'react';
 import { AlertCircle, Check, Copy } from 'lucide-react';
