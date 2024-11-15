@@ -21,7 +21,6 @@ const typeMapping: TypeMapping = {
 const capitalize = (str: string): string => str.charAt(0).toUpperCase() + str.slice(1);
 
 const sanitizeClassName = (name: string): string => {
-  // Convert array indices or invalid characters to valid class names
   return isNaN(Number(name)) ? capitalize(name) : `Item${name}`;
 };
 
@@ -40,16 +39,17 @@ const toPythonType = (value: any, currentPath: string[] = []): string => {
   return typeMapping[typeof value] || 'Any';
 };
 
-const generatePydanticClass = (obj: any): string => {
-  let output = 'from pydantic import BaseModel, Field\nfrom typing import Optional, List, Dict, Any\n\n';
+const generatePydanticClass = (obj: any, useField: boolean = true): string => {
+  let output = useField 
+    ? 'from pydantic import BaseModel, Field\nfrom typing import Optional, List, Dict, Any\n\n'
+    : 'from pydantic import BaseModel\nfrom typing import Optional, List, Dict, Any\n\n';
+    
   const classes = new Map<string, string>();
   const processedObjects = new Set<string>();
 
   const processObject = (obj: any, className: string, currentPath: string[] = []): void => {
-    // Handle arrays differently
     if (Array.isArray(obj)) {
       if (obj.length > 0 && typeof obj[0] === 'object' && obj[0] !== null) {
-        // Process the first item as a template for array items
         const itemClassName = `${className}Item`;
         processObject(obj[0], itemClassName, [...currentPath, '0']);
       }
@@ -67,21 +67,31 @@ const generatePydanticClass = (obj: any): string => {
       const newPath = [...currentPath, key];
 
       if (value === null) {
-        classCode += `    ${fieldName}: Optional[Any] = Field(default=None)\n`;
+        classCode += useField 
+          ? `    ${fieldName}: Optional[Any] = Field(default=None)\n`
+          : `    ${fieldName}: Optional[Any] = None\n`;
       } else if (Array.isArray(value)) {
         if (value.length > 0 && typeof value[0] === 'object' && value[0] !== null) {
           const itemClassName = `${sanitizeClassName(key)}Item`;
           processObject(value[0], itemClassName, [...newPath, '0']);
-          classCode += `    ${fieldName}: List[${itemClassName}] = Field(default_factory=list)\n`;
+          classCode += useField 
+            ? `    ${fieldName}: List[${itemClassName}] = Field(default_factory=list)\n`
+            : `    ${fieldName}: List[${itemClassName}] = []\n`;
         } else {
-          classCode += `    ${fieldName}: List[${typeMapping[typeof value[0]] || 'Any'}] = Field(default_factory=list)\n`;
+          classCode += useField 
+            ? `    ${fieldName}: List[${typeMapping[typeof value[0]] || 'Any'}] = Field(default_factory=list)\n`
+            : `    ${fieldName}: List[${typeMapping[typeof value[0]] || 'Any'}] = []\n`;
         }
       } else if (typeof value === 'object') {
         const nestedClassName = sanitizeClassName(key);
         processObject(value, nestedClassName, newPath);
-        classCode += `    ${fieldName}: ${nestedClassName} = Field(...)\n`;
+        classCode += useField 
+          ? `    ${fieldName}: ${nestedClassName} = Field()\n`
+          : `    ${fieldName}: ${nestedClassName}\n`;
       } else {
-        classCode += `    ${fieldName}: ${toPythonType(value)} = Field(...)\n`;
+        classCode += useField 
+          ? `    ${fieldName}: ${toPythonType(value)} = Field()\n`
+          : `    ${fieldName}: ${toPythonType(value)}\n`;
       }
     }
 
@@ -91,15 +101,18 @@ const generatePydanticClass = (obj: any): string => {
   if (Array.isArray(obj)) {
     if (obj.length > 0 && typeof obj[0] === 'object' && obj[0] !== null) {
       processObject(obj[0], 'ImageData', ['item']);
-      classes.set('Root', `class Root(BaseModel):\n    data: List[ImageData] = Field(default_factory=list)\n`);
+      classes.set('Root', useField 
+        ? `class Root(BaseModel):\n    data: List[ImageData] = Field(default_factory=list)\n`
+        : `class Root(BaseModel):\n    data: List[ImageData] = []\n`);
     } else {
-      classes.set('Root', `class Root(BaseModel):\n    data: List[${typeMapping[typeof obj[0]] || 'Any'}] = Field(default_factory=list)\n`);
+      classes.set('Root', useField 
+        ? `class Root(BaseModel):\n    data: List[${typeMapping[typeof obj[0]] || 'Any'}] = Field(default_factory=list)\n`
+        : `class Root(BaseModel):\n    data: List[${typeMapping[typeof obj[0]] || 'Any'}] = []\n`);
     }
   } else {
     processObject(obj, 'Root');
   }
   
-  // Return classes in order, with Root last
   const rootClass = classes.get('Root') || '';
   classes.delete('Root');
   return output + Array.from(classes.values()).join('\n') + '\n' + rootClass;
@@ -110,11 +123,12 @@ const JsonToPydanticConverter: FC = () => {
   const [pydanticOutput, setPydanticOutput] = useState<string>('');
   const [error, setError] = useState<string>('');
   const [copied, setCopied] = useState<boolean>(false);
+  const [useField, setUseField] = useState<boolean>(true);
 
   const handleConvert = (): void => {
     try {
       const jsonData = JSON.parse(jsonInput);
-      const pydanticCode = generatePydanticClass(jsonData);
+      const pydanticCode = generatePydanticClass(jsonData, useField);
       setPydanticOutput(pydanticCode);
       setError('');
     } catch (err) {
@@ -152,13 +166,34 @@ const JsonToPydanticConverter: FC = () => {
           />
         </div>
 
-        <button
-          className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
-          onClick={handleConvert}
-          type="button"
-        >
-          Convert to Pydantic
-        </button>
+        <div className="flex space-x-4">
+          <button
+            className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+            onClick={handleConvert}
+            type="button"
+          >
+            Convert to Pydantic
+          </button>
+
+          <button
+            className={`px-4 py-2 rounded ${useField ? 'bg-green-500 text-white hover:bg-green-600' : 'bg-gray-200 hover:bg-gray-300'}`}
+            onClick={() => {
+              setUseField(!useField);
+              if (jsonInput) {
+                try {
+                  const jsonData = JSON.parse(jsonInput);
+                  const pydanticCode = generatePydanticClass(jsonData, !useField);
+                  setPydanticOutput(pydanticCode);
+                } catch (err) {
+                  // Ignore error as it will be handled by handleConvert
+                }
+              }
+            }}
+            type="button"
+          >
+            {useField ? 'Toggle Using Field()' : 'Using Simple Format'}
+          </button>
+        </div>
 
         {error && (
           <Alert variant="destructive">
