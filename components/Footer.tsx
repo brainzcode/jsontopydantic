@@ -26,7 +26,7 @@ const Footer: React.FC = () => {
           </div> */}
 
 					<div className='text-sm text-gray-600'>
-						Built with{' '}
+						Built with{' '}❤️{' '}
 						<a
 							href='https://nextjs.org'
 							target='_blank'
